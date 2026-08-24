@@ -2,11 +2,50 @@
 
 from __future__ import annotations
 
+import fcntl
+import hashlib
 import os
+import tempfile
+from contextlib import contextmanager
 from pathlib import Path
 
 from . import console
 from .config import EXCLUDED_SUFFIXES, EXIFTOOL_TMP_SUFFIX
+
+
+class DirectoryBusy(RuntimeError):
+    """Another smoothexif is already working on this directory."""
+
+
+@contextmanager
+def directory_lock(directory: Path):
+    """Hold an exclusive lock on ``directory`` for the length of the block.
+
+    Two runs over one folder race: each plans against a snapshot the other is
+    busy invalidating, so they trip over half-finished renames and can leave
+    spurious "-1" duplicates behind. Different folders are unaffected and run
+    happily in parallel.
+
+    The lock is an flock on a file in the temp dir, keyed by the directory path
+    - so nothing is written into the photo folder itself, and the kernel drops
+    the lock when the process dies, however it dies. There is no stale lock to
+    clean up after a crash.
+    """
+    key = hashlib.sha1(str(directory).encode()).hexdigest()[:16]
+    lockfile = Path(tempfile.gettempdir()) / f"smoothexif-{key}.lock"
+    handle = os.open(lockfile, os.O_CREAT | os.O_RDWR, 0o644)
+    try:
+        fcntl.flock(handle, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except OSError:
+        os.close(handle)
+        raise DirectoryBusy(directory) from None
+    try:
+        os.truncate(handle, 0)
+        os.write(handle, str(os.getpid()).encode())
+        yield
+    finally:
+        fcntl.flock(handle, fcntl.LOCK_UN)
+        os.close(handle)
 
 
 def list_files(directory: Path) -> list[Path]:

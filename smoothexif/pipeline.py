@@ -8,6 +8,7 @@ through the write path - it simply never calls ``execute_plan``.
 
 from __future__ import annotations
 
+import sys
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
@@ -18,7 +19,12 @@ from .exiftool import ExifTool
 from .macos import set_finder_dates
 from .model import Bucket, Item, build_items, classify
 from .prompts import Choice, Prompter, quit_preview
-from .timestamps import resolve_primary, same_moment, timestamp_from_name
+from .timestamps import (
+    has_embedded_tags,
+    resolve_primary,
+    same_moment,
+    timestamp_from_name,
+)
 
 
 @dataclass
@@ -212,6 +218,9 @@ def validate(
 
     failures: list[Path] = []
     undated: list[Path] = []
+    unreadable: list[Path] = []
+    fixable: list[Path] = []      # a normal run resolves these unaided
+    mismatched: list[Path] = []   # these need a decision
     passed = 0
     for path in paths:
         from_name = timestamp_from_name(path.stem)
@@ -221,17 +230,26 @@ def validate(
             continue
         if not from_name.leads:
             console.warn(f"{path.name}: date is not at the start of the name")
+            fixable.append(path)
             failures.append(path)
             continue
         name_ts, precision = from_name.ts, from_name.precision
-        primary = resolve_primary(tags_by_path.get(path, {}))
+        tags = tags_by_path.get(path, {})
+        primary = resolve_primary(tags, path.suffix)
         if not primary:
-            console.warn(f"{path.name}: no primary metadata timestamp")
             failures.append(path)
+            if not has_embedded_tags(tags):
+                # Only filesystem dates came back, so nothing was actually read.
+                console.warn(f"{path.name}: could not read any metadata from this file")
+                unreadable.append(path)
+            else:
+                console.warn(f"{path.name}: no primary metadata timestamp")
+                fixable.append(path)
             continue
         tag, dt = primary
         if not same_moment(dt, name_ts, precision):
             console.warn(f"{path.name}: filename {name_ts} != {tag} {dt}")
+            mismatched.append(path)
             failures.append(path)
         else:
             passed += 1
@@ -242,6 +260,7 @@ def validate(
             console.info(f"    {path.name}")
         if len(undated) > 10:
             console.info(f"    ... and {len(undated) - 10} more")
+        fixable.extend(undated)
 
     # A folder where nothing at all carries a date has simply not been run yet.
     if passed == 0 and undated and len(undated) == len(failures):
@@ -253,11 +272,55 @@ def validate(
             [p for p in failures if p not in exempt],
             directory, UNSUCCESSFUL_DIR, dry_run,
         )
-    elif failures:
-        console.info(
-            f"(reporting only; use --quarantine to move them to {UNSUCCESSFUL_DIR}/)"
-        )
+    else:
+        _suggest_next_command(directory, fixable, mismatched, unreadable)
+        if failures:
+            console.info(
+                f"(reporting only; use --quarantine to move them to {UNSUCCESSFUL_DIR}/)"
+            )
     return passed, len(failures)
+
+
+def _suggest_next_command(
+    directory: Path,
+    fixable: list[Path],
+    mismatched: list[Path],
+    unreadable: list[Path],
+) -> None:
+    """Print the command that resolves what the check just found.
+
+    Reporting a problem without saying what to do about it is what sends people
+    off copying files around to experiment.
+    """
+    if not (fixable or mismatched or unreadable):
+        return
+    # Echo the invocation as typed, so the suggestion is directly runnable.
+    prog = sys.argv[0] or "smoothexif"
+    target = f'"{directory}"' if " " in str(directory) else str(directory)
+
+    console.heading("What to do")
+    if fixable:
+        console.info(f"  {len(fixable)} file(s) a normal run fixes by itself:")
+        console.info(f"      {prog} {target}")
+    if mismatched:
+        console.info(
+            f"  {len(mismatched)} file(s) where filename and metadata disagree "
+            f"- the run asks about each:"
+        )
+        console.info(f"      {prog} {target}")
+        console.info("    or decide once for all of them:")
+        console.info(f"      {prog} --prefer filename {target}")
+    if unreadable:
+        console.info(
+            f"  {len(unreadable)} file(s) whose metadata could not be read at all."
+        )
+        console.info(
+            "    Not a timestamp problem - the file did not open. On a network or"
+        )
+        console.info(
+            "    sync-on-demand volume, make sure it is downloaded, then re-check:"
+        )
+        console.info(f"      {prog} -v {target}")
 
 
 # --------------------------------------------------------------------------

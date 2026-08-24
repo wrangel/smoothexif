@@ -50,17 +50,35 @@ FILENAME_PATTERNS = [
 # --------------------------------------------------------------------------
 
 #: Tags trusted as the authoritative capture time, most trusted first.
-#: QuickTime:CreationDate leads because Apple stores the real capture offset in
-#: it, so its local part is the wall clock at the place of capture - the same
-#: thing DateTimeOriginal means for stills. Plain QuickTime CreateDate is UTC
-#: and only becomes comparable via -api QuickTimeUTC.
-PRIMARY_TAGS = ("CreationDate", "DateTimeOriginal", "CreateDate")
+#:
+#: For video, QuickTime:CreationDate leads because Apple stores the real capture
+#: offset in it, so its local part is the wall clock at the place of capture -
+#: the same thing DateTimeOriginal means for stills. Plain QuickTime CreateDate
+#: is UTC and only becomes comparable via -api QuickTimeUTC.
+PRIMARY_TAGS_VIDEO = ("CreationDate", "DateTimeOriginal", "CreateDate")
+
+#: For stills, DateTimeOriginal is the authority and CreationDate must NOT be
+#: consulted. On a JPEG that name belongs to something else entirely - on GoPro
+#: photos it is a maker-note field exiftool cannot write ("Sorry,
+#: GoPro:CreationDate doesn't exist or isn't writable"), holding whatever the
+#: camera clock said. Trusting it would fail such files forever: the tool would
+#: correct DateTimeOriginal, then validation would re-read the stale maker note
+#: and report the same mismatch on every run.
+PRIMARY_TAGS_STILL = ("DateTimeOriginal", "CreateDate")
+
+#: Union, for deciding what counts as a *secondary* tag.
+ALL_PRIMARY_TAGS = tuple(dict.fromkeys(PRIMARY_TAGS_VIDEO + PRIMARY_TAGS_STILL))
 
 #: QuickTime atoms store UTC. Without this, every video is read 1-2h off.
 QUICKTIME_ARGS = ["-api", "QuickTimeUTC"]
 
 #: Containers whose dates live in UTC rather than in capture-local wall clock.
 VIDEO_SUFFIXES = {".mov", ".mp4", ".m4v", ".3gp", ".3g2", ".avi", ".mts", ".m2ts", ".mqv"}
+
+
+def primary_tags_for(suffix: str) -> tuple[str, ...]:
+    """Which tags to trust, given what kind of file this is."""
+    return PRIMARY_TAGS_VIDEO if suffix.lower() in VIDEO_SUFFIXES else PRIMARY_TAGS_STILL
 
 #: Filesystem pseudo-tags. Never provenance on their own, but usable as a
 #: time-of-day hint when they land on a date the filename already agrees with.

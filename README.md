@@ -73,6 +73,7 @@ renamed, not rewritten, and not moved aside by the validation pass.
 | `--non-interactive` | never prompt; ambiguous files go to `_unsuccessful/` |
 | `--quarantine` | with `-v`, also move failing files aside |
 | `--normalise-names` | force every name into `YYYYMMDD_HHMMSS__original` form |
+| `--no-caffeinate` | allow the Mac to idle-sleep during the run |
 
 ### Wrong camera clock
 
@@ -138,6 +139,29 @@ nothing, and that a conflict is never silently overwritten without `--prefer`.
 Exits non-zero on failure. It touches nothing outside its own temp directory.
 
 `./selftest.sh --keep` leaves the folder behind for inspection.
+
+## Running several at once
+
+Separate folders in parallel terminal tabs is fine and fully supported — each
+run is independent, and each holds its own sleep assertion, so the Mac stays
+awake until the last one finishes.
+
+Two runs on the **same** folder is refused: each would plan against a snapshot
+the other is busy invalidating, tripping over half-finished renames and leaving
+spurious `-1` duplicates. The second run exits 3 with a clear message. The lock
+is an `flock` in the temp dir keyed by the folder path, so nothing is written
+into the photo folder and the kernel releases it however the process dies —
+there is no stale lock to clean up. `--dry-run` and `-v` are read-only and are
+never blocked.
+
+## Sleep
+
+Rewriting a video library is tens of GB of I/O over many minutes with no
+keyboard activity — precisely when a Mac decides to idle-sleep. Every run
+therefore holds sleep off via `caffeinate -w`, which watches the process and
+exits by itself when the run ends, so nothing is left behind even if it is
+killed. Closing the lid still sleeps the machine; nothing can prevent that.
+`--no-caffeinate` opts out.
 
 ## Notes
 

@@ -14,12 +14,13 @@ from typing import NamedTuple
 from .config import (
     AGREEMENT_WINDOW,
     DEFAULT_TIME,
+    FS_TAGS,
     FILENAME_PATTERNS,
     MAX_YEAR,
     MIN_YEAR,
     PREFIX_FMT,
     PREFIX_RE,
-    PRIMARY_TAGS,
+    primary_tags_for,
 )
 
 
@@ -61,19 +62,32 @@ def parse_exif_dt(value: object) -> datetime | None:
     return None
 
 
-def resolve_primary(tags: dict) -> tuple[str, datetime] | None:
+def resolve_primary(tags: dict, suffix: str = "") -> tuple[str, datetime] | None:
     """Pick the most trustworthy capture time from a file's tags.
 
-    Returns the first PRIMARY_TAGS entry that parses, and only that one.
-    Requiring all of them to agree would fail every video, where QuickTime
-    CreationDate (capture-local) and CreateDate (UTC-derived) legitimately
-    differ.
+    ``suffix`` selects which tags are even eligible - the answer differs between
+    video and stills, see config.primary_tags_for.
+
+    Returns the first eligible tag that parses, and only that one. Requiring all
+    of them to agree would fail every video, where QuickTime CreationDate
+    (capture-local) and CreateDate (UTC-derived) legitimately differ.
     """
-    for tag in PRIMARY_TAGS:
+    for tag in primary_tags_for(suffix):
         dt = parse_exif_dt(tags.get(tag))
         if dt:
             return tag, dt
     return None
+
+
+def has_embedded_tags(tags: dict) -> bool:
+    """Did anything at all come out of the file itself?
+
+    Filesystem dates come from stat() and are present even for a file exiftool
+    could not open - a placeholder on a sync-on-demand volume, a truncated
+    download, a permissions problem. Their presence alone therefore means the
+    read failed, not that the file genuinely carries no dates.
+    """
+    return any(key != "SourceFile" and key not in FS_TAGS for key in tags)
 
 
 def _make_dt(year: int, month: int, day: int, hour: int, minute: int, second: int

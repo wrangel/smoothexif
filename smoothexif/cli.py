@@ -8,6 +8,8 @@ from pathlib import Path
 from . import console
 from .config import UNSUCCESSFUL_DIR
 from .exiftool import ExifTool, ExifToolMissing
+from .files import DirectoryBusy, directory_lock
+from .macos import prevent_sleep
 from .model import Bucket
 from .pipeline import Settings, run, validate
 
@@ -40,6 +42,9 @@ def build_parser() -> argparse.ArgumentParser:
                         help=f"never prompt; ambiguous files go to {UNSUCCESSFUL_DIR}/")
     parser.add_argument("--quarantine", action="store_true",
                         help=f"with -v, also move failing files to {UNSUCCESSFUL_DIR}/")
+    parser.add_argument("--no-caffeinate", action="store_true",
+                        help="allow the Mac to idle-sleep during the run. By "
+                             "default sleep is held off until it finishes")
     parser.add_argument("--normalise-names", action="store_true",
                         help="rewrite every filename into YYYYMMDD_HHMMSS__original "
                              "form. Off by default: a name that already carries a "
@@ -61,6 +66,9 @@ def main(argv: list[str] | None = None) -> int:
         console.err(str(exc))
         return 2
 
+    # Held for the lifetime of the process; caffeinate exits when we do.
+    _awake = None if args.no_caffeinate else prevent_sleep()  # noqa: F841
+
     if args.validate_only:
         console.info(console.bold(f"Validating {directory}"))
         passed, failed = validate(exiftool, directory, args.dry_run, args.quarantine)
@@ -68,10 +76,21 @@ def main(argv: list[str] | None = None) -> int:
         console.info(f"{passed} validated, {failed} {verb}")
         return 1 if failed else 0
 
-    return run(exiftool, Settings(
+    settings = Settings(
         directory=directory,
         dry_run=args.dry_run,
         interactive=not args.non_interactive,
         prefer=args.prefer,
         normalise_names=args.normalise_names,
-    ))
+    )
+    # Read-only modes need no exclusion; only a run that renames does.
+    if args.dry_run:
+        return run(exiftool, settings)
+    try:
+        with directory_lock(directory):
+            return run(exiftool, settings)
+    except DirectoryBusy:
+        console.err(f"another smoothexif is already running on {directory}")
+        console.info("  Wait for it to finish, or work on a different folder.")
+        console.info("  Parallel runs on separate folders are fine.")
+        return 3

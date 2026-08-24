@@ -12,7 +12,7 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
 
-from .config import FS_TAGS, PARTITION, PREFIX_FMT, PRIMARY_TAGS, VIDEO_SUFFIXES
+from .config import ALL_PRIMARY_TAGS, FS_TAGS, PARTITION, PREFIX_FMT, VIDEO_SUFFIXES
 from .macos import read_finder_dates
 from .timestamps import (
     Precision,
@@ -136,12 +136,12 @@ def build_item(path: Path, tags: dict) -> Item:
     _prefix_ts, body = split_prefix(path.stem)
     item = Item(path=path, body=body, ext=path.suffix)
 
-    primary = resolve_primary(tags)
+    primary = resolve_primary(tags, path.suffix)
     if primary:
         item.exif_primary_tag, item.exif_primary = primary
 
     for tag, raw in tags.items():
-        if tag == "SourceFile" or tag in PRIMARY_TAGS:
+        if tag == "SourceFile" or tag in ALL_PRIMARY_TAGS:
             continue
         dt = parse_exif_dt(raw)
         if dt:

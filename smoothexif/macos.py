@@ -10,7 +10,9 @@ from __future__ import annotations
 
 import ctypes
 import os
+import shutil
 import struct
+import subprocess
 from datetime import datetime
 from pathlib import Path
 
@@ -52,6 +54,32 @@ def set_finder_dates(path: Path, ts: datetime) -> bool:
         return rc == 0
     except OSError:
         return False
+
+
+def prevent_sleep() -> subprocess.Popen | None:
+    """Keep the Mac awake for as long as this process lives.
+
+    Rewriting a library of videos is tens of GB of I/O and can run for many
+    minutes with no keyboard activity, which is exactly when a Mac decides to
+    idle-sleep. ``caffeinate -w`` watches our PID and exits by itself when we
+    do, so there is nothing to clean up even if we are killed.
+
+    Returns the handle (unused, but kept so the child is not garbage collected)
+    or None when caffeinate is unavailable. Note this cannot defeat closing the
+    lid - nothing can.
+    """
+    binary = shutil.which("caffeinate")
+    if not binary:
+        return None
+    try:
+        return subprocess.Popen(
+            # -i prevent idle sleep, -s prevent system sleep while on mains.
+            [binary, "-i", "-s", "-w", str(os.getpid())],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        )
+    except OSError:
+        return None
 
 
 def read_finder_dates(path: Path) -> tuple[datetime | None, datetime | None]:
