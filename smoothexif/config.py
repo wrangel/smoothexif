@@ -80,6 +80,33 @@ def primary_tags_for(suffix: str) -> tuple[str, ...]:
     """Which tags to trust, given what kind of file this is."""
     return PRIMARY_TAGS_VIDEO if suffix.lower() in VIDEO_SUFFIXES else PRIMARY_TAGS_STILL
 
+
+#: What a write actually sets. Deliberately NOT "-time:all=", which assigns the
+#: value to every date tag exiftool knows how to write - on a bare JPEG that is
+#: 94 tags and ~14KB of invented XMP, including medical imaging
+#: (DICOM:PatientBirthDate), biodiversity (dwc:EventDate) and publishing licence
+#: dates. None of it belongs in a photo, and it is inherited noise, not intent.
+WRITE_TAGS_STILL = ("-AllDates={stamp}",)
+
+#: Video needs more: -AllDates covers QuickTime:CreateDate and XMP, but leaves
+#: the Keys CreationDate and the track/media atoms at their old values - and
+#: CreationDate is exactly what is trusted first when reading a video back.
+WRITE_TAGS_VIDEO = (
+    "-AllDates={stamp}",
+    "-QuickTime:CreateDate={stamp}",
+    "-QuickTime:ModifyDate={stamp}",
+    "-QuickTime:CreationDate={stamp}",
+    "-TrackCreateDate={stamp}",
+    "-TrackModifyDate={stamp}",
+    "-MediaCreateDate={stamp}",
+    "-MediaModifyDate={stamp}",
+)
+
+
+def write_tags_for(suffix: str) -> tuple[str, ...]:
+    """Which tags to set, given what kind of file this is."""
+    return WRITE_TAGS_VIDEO if suffix.lower() in VIDEO_SUFFIXES else WRITE_TAGS_STILL
+
 #: Filesystem pseudo-tags. Never provenance on their own, but usable as a
 #: time-of-day hint when they land on a date the filename already agrees with.
 FS_TAGS = ("FileModifyDate", "FileCreateDate", "FileAccessDate", "FileInodeChangeDate")
@@ -112,8 +139,13 @@ MAX_YEAR = datetime.now().year + 1
 #: counting as the same moment. Anything inside this window is left alone; only
 #: a genuinely different timestamp is worth asking about.
 #:
-#: 24 hours comfortably covers the two routine causes of small disagreement -
-#: a camera writing local time into a UTC field (at most 14h), and a date-only
-#: filename defaulting to 00:01 while the metadata holds the real time of day.
-#: A camera whose clock was reset is out by months or years, far outside it.
-AGREEMENT_WINDOW = timedelta(hours=24)
+#: Three hours absorbs the one routine cause of small disagreement between two
+#: full timestamps - a camera writing local time into a field defined as UTC -
+#: without waving through a real difference. A date-only filename defaulting to
+#: 00:01 while the metadata holds the true time of day can be most of a day
+#: apart, but that case is settled by the same-calendar-day comparison in
+#: same_moment() and never reaches this window.
+#:
+#: It was 24h, which silently accepted a file whose prefix said 22 Dec 20:20
+#: while its metadata said 23 Dec 11:55 - a different day, and a real error.
+AGREEMENT_WINDOW = timedelta(hours=3)

@@ -18,7 +18,7 @@ from datetime import datetime
 from pathlib import Path
 
 from . import console
-from .config import QUICKTIME_ARGS
+from .config import QUICKTIME_ARGS, write_tags_for
 
 #: Where Homebrew puts it on Apple Silicon and Intel respectively.
 _FALLBACK_PATHS = ("/opt/homebrew/bin/exiftool", "/usr/local/bin/exiftool")
@@ -97,15 +97,13 @@ class ExifTool:
             if record.get("SourceFile")
         }
 
-    def _write(self, jobs: list[tuple[Path, datetime]], tags: list[str]) -> bool:
-        if not jobs:
+    def _write_groups(self, groups: list[list[str]]) -> bool:
+        """Run one -execute block per group, all in a single process."""
+        if not groups:
             return True
         lines: list[str] = []
-        for path, ts in jobs:
-            stamp = ts.strftime(_EXIF_STAMP_FMT)
-            lines += ["-overwrite_original", "-m", *QUICKTIME_ARGS]
-            lines += [tag.format(stamp=stamp) for tag in tags]
-            lines += [str(path), "-execute"]
+        for group in groups:
+            lines += group + ["-execute"]
         proc = self._run(lines)
         if proc.returncode != 0:
             console.err(f"exiftool write reported errors:\n{proc.stderr.strip()}")
@@ -113,9 +111,28 @@ class ExifTool:
         return True
 
     def write_capture_times(self, jobs: list[tuple[Path, datetime]]) -> bool:
-        """Rewrite every embedded date tag. One process regardless of count."""
-        return self._write(jobs, ["-time:all={stamp}"])
+        """Set the capture time. One process regardless of how many files.
+
+        Which tags get written depends on the format - see config.write_tags_for.
+        """
+        groups = []
+        for path, ts in jobs:
+            stamp = ts.strftime(_EXIF_STAMP_FMT)
+            groups.append([
+                "-overwrite_original", "-m", *QUICKTIME_ARGS,
+                *[tag.format(stamp=stamp) for tag in write_tags_for(path.suffix)],
+                str(path),
+            ])
+        return self._write_groups(groups)
 
     def write_finder_times(self, jobs: list[tuple[Path, datetime]]) -> bool:
         """Fallback for volumes where the setattrlist syscall is refused."""
-        return self._write(jobs, ["-FileCreateDate={stamp}", "-FileModifyDate={stamp}"])
+        groups = []
+        for path, ts in jobs:
+            stamp = ts.strftime(_EXIF_STAMP_FMT)
+            groups.append([
+                "-overwrite_original", "-m",
+                f"-FileCreateDate={stamp}", f"-FileModifyDate={stamp}",
+                str(path),
+            ])
+        return self._write_groups(groups)

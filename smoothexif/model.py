@@ -108,15 +108,36 @@ class Item:
         sorts alphabetically among unrelated files. So does a name with no
         timestamp at all ("GX010001.MP4"), which takes its date from metadata.
 
+        Leading with *a* timestamp is not enough - it has to be the one we
+        settled on. A name whose prefix disagrees with the chosen time is wrong
+        and must be rewritten, otherwise picking "trust the metadata" at a
+        conflict would leave the file contradicting itself forever.
+
         ``normalise`` forces the canonical form regardless, for anyone who wants
         one uniform convention across the whole library.
         """
-        if self.name_leads and not normalise:
-            return self.path.name
         stamp = self.target_ts.strftime(PREFIX_FMT)
+        if (
+            not normalise
+            and self.name_leads
+            and self.name_ts is not None
+            and same_moment(self.name_ts, self.target_ts, self.name_precision)
+        ):
+            return self.path.name
         # Nothing left of the name but the timestamp itself - don't duplicate it.
         if not self.body or self.body == stamp:
             return f"{stamp}{self.ext}"
+        # Replacing a wrong prefix can uncover an original name that already
+        # leads with the right time ("20201111_101010__20241223_115548_iOS"),
+        # in which case the bare original is the better answer.
+        if not normalise:
+            inner = timestamp_from_name(self.body)
+            if (
+                inner
+                and inner.leads
+                and same_moment(inner.ts, self.target_ts, inner.precision)
+            ):
+                return f"{self.body}{self.ext}"
         return f"{stamp}{PARTITION}{self.body}{self.ext}"
 
     def needs_rename(self, normalise: bool = False) -> bool:

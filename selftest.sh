@@ -256,6 +256,46 @@ else
 fi
 
 echo
+echo "=== a wrong prefix is corrected, not preserved ==="
+# Leading with *a* timestamp is not enough; it must be the one chosen. Keeping a
+# disagreeing prefix left the file failing validation on every future run.
+WP="$WORK/wrongprefix"; mkdir -p "$WP"
+mk "20201111_101010__20241223_115548000_iOS.jpg" "$WP"
+setexif "$WP" "20201111_101010__20241223_115548000_iOS.jpg" -AllDates="2024:12:23 11:55:48"
+printf 'e\n' | "$SMOOTHEXIF" "$WP" >/dev/null 2>&1
+# Stripping the bad prefix uncovers a name that already leads correctly.
+exists WRONGPFX "$WP" "20241223_115548000_iOS.jpg"
+VOUT="$("$SMOOTHEXIF" -v "$WP" 2>&1)"
+grep -q "0 failing" <<<"$VOUT" && ok WRONGPFX "validates cleanly afterwards" \
+                               || bad WRONGPFX "still failing: $(grep warn <<<"$VOUT" | head -1)"
+
+echo
+echo "=== tolerance: hours are noise, half a day is not ==="
+TOL="$WORK/tolerance"; mkdir -p "$TOL"
+mk "20260101_120000_tz.jpg" "$TOL"                       # 2h apart - timezone artefact
+setexif "$TOL" "20260101_120000_tz.jpg" -AllDates="2026:01:01 14:00:00"
+mk "20241222_202000__real.jpg" "$TOL"                    # 15.5h apart - a real error
+setexif "$TOL" "20241222_202000__real.jpg" -AllDates="2024:12:23 11:55:48"
+PLAN="$("$SMOOTHEXIF" --dry-run --non-interactive "$TOL" 2>&1)"
+grep -q "B2=1" <<<"$PLAN" && ok TOL "a 2h shift is accepted silently" \
+                          || bad TOL "2h shift not treated as agreement"
+grep -q "B3=1" <<<"$PLAN" && ok TOL "a 15h gap is raised as a conflict" \
+                          || bad TOL "15h gap was waved through"
+
+echo
+echo "=== writes stay minimal (no invented XMP) ==="
+BL="$WORK/bloat"; mkdir -p "$BL"
+mk "20240101_100000_nodates.jpg" "$BL"
+"$SMOOTHEXIF" --non-interactive "$BL" >/dev/null 2>&1
+JUNK=$(exiftool -G1 -a -s -time:all "$BL/20240101_100000_nodates.jpg" 2>/dev/null \
+       | grep -cE 'DICOM|dwc|XMP-plus|prism|XMP-pur|getty|pdfx')
+if [[ "$JUNK" -eq 0 ]]; then
+  ok BLOAT "no unrelated date tags invented"
+else
+  bad BLOAT "$JUNK junk tags written (-time:all= regression)"
+fi
+
+echo
 echo "=== a still must ignore CreationDate (GoPro maker-note trap) ==="
 # On a JPEG, 'CreationDate' is not QuickTime's tag. GoPro photos carry an
 # unwritable maker-note field of that name holding whatever the camera clock

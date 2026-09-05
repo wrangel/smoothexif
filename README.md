@@ -1,10 +1,29 @@
 # smoothexif
 
-Normalise photo and video timestamps on macOS, so that the **filename**, the
-**embedded metadata** and the **Finder dates** all agree.
+**macOS only.** Normalise photo and video timestamps so that the **filename**,
+the **embedded metadata** and the **Finder dates** all agree.
 
 Requires macOS, Python 3.9+ and [exiftool](https://exiftool.org)
-(`brew install exiftool`). No other dependencies, no build step.
+(`brew install exiftool`). No other dependencies, no build step. It relies on
+`setattrlist`, `st_birthtime`, `GetFileInfo`, `osascript` and `caffeinate`, so
+it will not run on Linux or Windows.
+
+## Before you point this at your photos
+
+smoothexif **renames files and rewrites embedded metadata in place**. On
+irreplaceable originals, that deserves a moment's care:
+
+* **Always `--dry-run` first.** It writes nothing, renames nothing, moves
+  nothing, and prints exactly what it would do. Verified by test.
+* **Try a copy of one folder** before a whole library.
+* **Nothing is ever deleted.** Files it cannot resolve are moved to
+  `_unsuccessful/` in the same directory; zero-byte files to `_zeroByte/`.
+* **`-v` is read-only** and safe to run on anything, at any time.
+* **`--prefer filename` overwrites metadata from filenames on every conflicting
+  file.** Point it only at folders where you know the camera clock was wrong.
+* If the folder is watched by a sync agent (Dropbox, OneDrive, Synology Cloud
+  Sync), **pause it first** — exiftool writes a temporary file and renames over
+  the original, and a sync agent can upload the half-written state.
 
 ```bash
 bin/smoothexif --dry-run ~/Pictures/import   # show the plan, change nothing
@@ -54,11 +73,14 @@ into the canonical form regardless.
 ## When metadata gets rewritten
 
 Only when it is **genuinely different** from the filename, and only after asking.
-Anything within `AGREEMENT_WINDOW` (24 hours, in `config.py`) counts as
-agreement and is left untouched — that covers a camera writing local time into a
-UTC field, and a date-only filename defaulting to 00:01 while the metadata holds
-the real time of day. A camera whose clock was reset is out by months or years,
-far outside it.
+Anything within `AGREEMENT_WINDOW` (3 hours, in `config.py`) counts as agreement
+and is left untouched — that absorbs a camera writing local time into a field
+defined as UTC. A camera whose clock was reset is out by months or years, far
+outside it.
+
+Date-only and year-month filenames never reach that window: they are compared by
+calendar day and by month respectively, so a name defaulting to `00:01` does not
+conflict with metadata holding the real time of day.
 
 Answering `s` at a conflict leaves that file completely alone — it is not
 renamed, not rewritten, and not moved aside by the validation pass.
@@ -132,11 +154,17 @@ it simply never executes.
 ./selftest.sh
 ```
 
-Builds a throwaway folder in `$TMPDIR` covering every bucket, runs the full
-hierarchy, and asserts where each file landed, what metadata it got, that Finder
-dates match the filename, that a second run renames nothing, that `-v` moves
-nothing, and that a conflict is never silently overwritten without `--prefer`.
-Exits non-zero on failure. It touches nothing outside its own temp directory.
+50 assertions over throwaway files in `$TMPDIR`, covering every bucket. Among
+them: where each file lands, what metadata it gets, that Finder dates match the
+filename, that a second run renames nothing, that `-v` moves nothing, that a
+conflict is never silently resolved without `--prefer`, that a wrong prefix is
+corrected rather than preserved, that a still ignores `CreationDate` (the GoPro
+maker-note trap), that writes invent no unrelated XMP, that a declined conflict
+stays put, that sleep is held off and released, and that two runs on one folder
+refuse rather than race.
+
+Exits non-zero on failure. It touches nothing outside its own temp directory,
+and never opens Preview.
 
 `./selftest.sh --keep` leaves the folder behind for inspection.
 
@@ -163,6 +191,23 @@ exits by itself when the run ends, so nothing is left behind even if it is
 killed. Closing the lid still sleeps the machine; nothing can prevent that.
 `--no-caffeinate` opts out.
 
+## Conventions are yours to change
+
+Every naming and tolerance decision lives in `smoothexif/config.py`, in one
+place, and none of it is universal — these are one photographer's choices:
+
+| setting | default | meaning |
+| ------- | ------- | ------- |
+| `PREFIX_FMT` / `PARTITION` | `%Y%m%d_%H%M%S` + `__` | the prefix written for files that need one |
+| `DEFAULT_TIME` | `00:01:00` | substituted when a filename has a date but no time; deliberately not midnight, so a defaulted time is recognisable |
+| `AGREEMENT_WINDOW` | 3 hours | how far filename and metadata may drift before it counts as a conflict |
+| `MIN_YEAR` | 1900 | lower bound for a plausible date; raise it to reject more false matches |
+| `FILENAME_PATTERNS` | see file | timestamp shapes recognised in filenames, including German `um` and English `at` screenshot names |
+| `PRIMARY_TAGS_*` | see file | which tags are trusted, separately for stills and video |
+
+Change them there rather than through the command line; `./selftest.sh` will
+tell you if a change breaks an assumption.
+
 ## Notes
 
 * **Not recursive.** One directory level, by design. Flatten first if needed.
@@ -170,3 +215,11 @@ killed. Closing the lid still sleeps the machine; nothing can prevent that.
   a folder of 4 GB films means tens of GB of I/O. Stills run at roughly 500
   files in a couple of seconds.
 * Nothing is ever deleted. Unresolved files are moved to `_unsuccessful/`.
+
+## License
+
+MIT — see [LICENSE](LICENSE).
+
+Successor to [wrangel/exifgrinder](https://github.com/wrangel/exifgrinder), a
+Scala implementation of the same idea. This rewrite batches every exiftool call
+instead of spawning one per file, which on stills is roughly 140× faster.
