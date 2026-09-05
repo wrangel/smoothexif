@@ -1,0 +1,36 @@
+name: selftest
+
+# The job name below ("selftest") is what a branch ruleset asks for under
+# "Require status checks to pass". Renaming the job means updating the rule.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  selftest:
+    name: selftest
+    # smoothexif is macOS-only: setattrlist, st_birthtime, GetFileInfo,
+    # osascript and caffeinate all need a real Mac.
+    runs-on: macos-latest
+    timeout-minutes: 15
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install exiftool
+        run: brew install exiftool
+
+      - name: Show environment
+        run: |
+          sw_vers
+          echo "exiftool $(exiftool -ver)"
+          python3 --version
+          for tool in GetFileInfo caffeinate pmset; do
+            printf '%-12s %s\n' "$tool" "$(command -v "$tool" || echo MISSING)"
+          done
+
+      - name: Run self-test
+        run: ./selftest.sh
