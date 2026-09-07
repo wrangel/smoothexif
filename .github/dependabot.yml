@@ -1,0 +1,26 @@
+# smoothexif has no Python dependencies - it is standard library only, with no
+# requirements.txt or pyproject.toml to pin. The only thing here that can go
+# stale is the set of actions used by the CI workflow, so that is all Dependabot
+# is asked to watch.
+#
+# The tool's real external dependency, exiftool, is a Homebrew binary rather
+# than a package in any manifest, so no bot tracks it. Upgrade it by hand and
+# re-run ./selftest.sh afterwards - that is what verifies a new exiftool has not
+# changed behaviour the tool relies on.
+
+version: 2
+
+updates:
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: monthly
+    commit-message:
+      prefix: ci
+    labels:
+      - dependencies
+    groups:
+      # One pull request a month for all of them rather than one per action.
+      actions:
+        patterns:
+          - "*"
